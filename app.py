@@ -9,9 +9,14 @@ from sklearn.preprocessing import LabelEncoder
 
 # -- Konfiguracja projektu --
 TABLE = "liquid-tractor-462013-t5.football_dataset.all_matches"
-credentials_info = st.secrets["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
-credentials = service_account.Credentials.from_service_account_info(credentials_info)
-client = bigquery.Client(credentials=credentials, project=credentials_info["project_id"])
+from google.oauth2 import service_account
+
+from google.oauth2 import service_account
+from google.cloud import bigquery
+
+credentials = service_account.Credentials.from_service_account_file("credentials.json")
+client = bigquery.Client(credentials=credentials, project=credentials.project_id)
+
 
 st.set_page_config(page_title="⚽ Analiza meczów piłkarskich", layout="wide")
 st.title("⚽ Analiza meczów piłkarskich w Europie (20 sezonów)")
