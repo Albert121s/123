@@ -1,46 +1,38 @@
 import streamlit as st
 from google.cloud import bigquery
 from google.oauth2 import service_account
-import json
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
 
-# Konfiguracja
-PROJECT_ID = "liquid-tractor-462013-t5"
-DATASET = "football_dataset"
-TABLE = f"{PROJECT_ID}.{DATASET}.all_matches"
+
+# -- Konfiguracja projektu --
+TABLE = "liquid-tractor-462013-t5.football_dataset.all_matches"
+credentials_info = st.secrets["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
+credentials = service_account.Credentials.from_service_account_info(credentials_info)
+client = bigquery.Client(credentials=credentials, project=credentials_info["project_id"])
 
 st.set_page_config(page_title="⚽ Analiza meczów piłkarskich", layout="wide")
 st.title("⚽ Analiza meczów piłkarskich w Europie (20 sezonów)")
 
-# 🔐 Autoryzacja BigQuery z secrets
-credentials_info = json.loads(st.secrets["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
-credentials = service_account.Credentials.from_service_account_info(credentials_info)
-from google.oauth2 import service_account
-import json
-
-# Wczytaj poświadczenia z secrets
-credentials_dict = st.secrets["GOOGLE_CREDENTIALS"]
-credentials = service_account.Credentials.from_service_account_info(dict(credentials_dict))
-
-# Inicjalizacja klienta BigQuery
-from google.oauth2 import service_account
-
-credentials = service_account.Credentials.from_service_account_info(st.secrets["GOOGLE_CREDENTIALS"])
-client = bigquery.Client(credentials=credentials, project=PROJECT_ID)
-
-
-
-# --- FUNKCJE Z CACHE ---
-
+# -- Pobieranie dostępnych opcji --
 @st.cache_data
 def get_options():
     query = f"SELECT DISTINCT league, season FROM `{TABLE}`"
     df = client.query(query).to_dataframe()
     return sorted(df["league"].unique()), sorted(df["season"].unique())
 
+leagues, seasons = get_options()
+
+# -- Wybór ligi i sezonu --
+col1, col2 = st.columns(2)
+with col1:
+    selected_league = st.selectbox("🏆 Wybierz ligę:", leagues)
+with col2:
+    selected_season = st.selectbox("📅 Wybierz sezon:", seasons)
+
+# -- Pobieranie danych meczu --
 @st.cache_data
 def load_filtered(league, season):
     query = f"""
@@ -51,32 +43,11 @@ def load_filtered(league, season):
     """
     return client.query(query).to_dataframe()
 
-@st.cache_data
-def load_model_data():
-    query = f"""
-    SELECT season, league, HomeTeam, AwayTeam, FTR
-    FROM `{TABLE}`
-    WHERE FTHG IS NOT NULL AND FTAG IS NOT NULL
-    AND season < '2324'
-    """
-    return client.query(query).to_dataframe()
-
-# --- INTERFEJS WYBORU LIGI I SEZONU ---
-
-leagues, seasons = get_options()
-
-col1, col2 = st.columns(2)
-with col1:
-    selected_league = st.selectbox("🏆 Wybierz ligę:", leagues)
-with col2:
-    selected_season = st.selectbox("📅 Wybierz sezon:", seasons)
-
 df = load_filtered(selected_league, selected_season)
 
+# -- Wyświetlanie danych i statystyki --
 st.markdown(f"### 📄 Mecze: {selected_league} – sezon {selected_season}")
 st.dataframe(df)
-
-# --- STATYSTYKI ---
 
 if not df.empty:
     total_matches = len(df)
@@ -96,7 +67,6 @@ if not df.empty:
     col4.metric("🏠 Wygrane gospodarzy", home_wins)
     col5.metric("🛫 Wygrane gości", away_wins)
 
-    # Wykres najczęstszych wyników
     st.markdown("### 🧮 Najczęstsze wyniki")
     df["Wynik"] = df["FTHG"].astype(str) + ":" + df["FTAG"].astype(str)
     wynik_counts = df["Wynik"].value_counts().sort_values(ascending=False)
@@ -107,7 +77,6 @@ if not df.empty:
     ax.set_ylabel("Liczba spotkań")
     st.pyplot(fig)
 
-    # Eksport
     st.markdown("### 📥 Eksport danych")
     csv = df.to_csv(index=False).encode('utf-8')
     st.download_button(
@@ -119,14 +88,25 @@ if not df.empty:
 else:
     st.warning("⚠️ Brak danych dla wybranej kombinacji ligi i sezonu.")
 
-# --- MODELOWANIE: PREDYKCJA WYNIKU ---
+# ------------------------------
+# 🔮 PRZEWIDYWANIE WYNIKU MECZU
+# ------------------------------
 
 st.markdown("---")
 st.header("🔮 Przewidywanie wyniku meczu (tylko w obrębie jednej ligi)")
 
+@st.cache_data
+def load_model_data():
+    query = f"""
+    SELECT season, league, HomeTeam, AwayTeam, FTR
+    FROM `{TABLE}`
+    WHERE FTHG IS NOT NULL AND FTAG IS NOT NULL
+    AND season < '2324'
+    """
+    return client.query(query).to_dataframe()
+
 model_df = load_model_data()
 selected_prediction_league = st.selectbox("🏆 Wybierz ligę do predykcji:", sorted(model_df["league"].unique()))
-
 df_league = model_df[model_df["league"] == selected_prediction_league]
 
 le_home = LabelEncoder()
@@ -136,7 +116,6 @@ df_league["AwayTeam_enc"] = le_away.fit_transform(df_league["AwayTeam"])
 
 X = df_league[["HomeTeam_enc", "AwayTeam_enc"]]
 y = df_league["FTR"]
-
 model = RandomForestClassifier(n_estimators=100, random_state=42)
 model.fit(X, y)
 
